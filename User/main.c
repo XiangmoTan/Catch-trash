@@ -11,6 +11,7 @@
 #include "stm32f10x.h" // Device header
 #include "vision_ctrl.h"
 
+#define LEDSEG_BOOT_TEST 1 /* 1: light all segments 400ms at boot to check tube/wiring; set 0 when done */
 #define catchsizemin 1000
 #define catchsizemax 6000
 #define distancevalue 20
@@ -215,6 +216,10 @@ int main(void)
     Irtracking_Init(); // 红外循迹初始化
     Irobstacle_Init(); // 红外避障初始化
     LEDSEG_Init();
+#if LEDSEG_BOOT_TEST
+    Digital_Display(8); /* all segments on */
+    Delay_ms(400);
+#endif
     Serial_Init(); // 串口初始化
     robot_Init();  // 机器人初始化
     Servo_Init();  // 舵机初始化

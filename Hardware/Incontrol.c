@@ -105,4 +105,8 @@ void EXTI9_5_IRQHandler(void)	  //红外遥控外部中断
 //		}
 //	}
 //	EXTI_ClearITPendingBit(EXTI_Line8);	
+
+	/* IR remote: must clear the pending bit, otherwise one falling edge on PA8
+	   re-enters this empty handler forever and the main loop never runs. */
+	EXTI_ClearITPendingBit(EXTI_Line8);
 }
