@@ -758,6 +758,16 @@
               <FilePath>.\Hardware\vision_ctrl.h</FilePath>
             </File>
             <File>
+              <FileName>ultrasonic.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Hardware\ultrasonic.c</FilePath>
+            </File>
+            <File>
+              <FileName>ultrasonic.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Hardware\ultrasonic.h</FilePath>
+            </File>
+            <File>
               <FileName>openmv_com.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Hardware\openmv_com.c</FilePath>

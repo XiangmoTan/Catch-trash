@@ -13,6 +13,7 @@
 #include "Delay.h"
 #include "LEDSEG.h"
 #include "robot.h"
+#include "ultrasonic.h"
 
 #define FRAME_A 0x2C
 #define FRAME_B 0x13
@@ -36,8 +37,26 @@ static uint8_t p_idx = 0; // 当前正在接收第几个数据字节（0~3）
 static uint8_t p_buf[4];  // 暂存收到的 4 个数据字节：v、w、state、chk
 
 // 闪烁参数
-#define BLINK_HALF_MS 1000  /* 亮 1s / 灭 1s */
+#define BLINK_HALF_MS 500   /* 亮 1s / 灭 1s */
 #define DISPLAY_LOST_MS 400 /* 400ms 无新帧 → 停止闪烁、常亮 */
+
+/* ==================== 超声波避障 ====================
+ * 优先级高于视觉指令：前方 < 15cm 时，不管 OpenMV 让不让走，
+ * STM32 都先退开再往一侧甩，避免把车顶到墙/投放框上。
+ *
+ * 只在 SEARCH 状态生效（AVOID_STATE_MASK 的 bit1），原因：
+ *   - APPROACH / PUSH 时车头前方本来就是垃圾，那是要推的，不是障碍；
+ *   - 如果在 APPROACH 也避障，车会在离垃圾 15cm 处被“劝退”，永远推不到。
+ *   如果希望 APPROACH 也避障，把掩码改成 0x06（bit1|bit2）。
+ */
+#define AVOID_ENABLE 1
+#define AVOID_STATE_MASK 0x02 /* bit1 = state 1 (SEARCH) */
+#define AVOID_START_MM 150    /* 前方 <15cm 触发（60ms 测一次，留一周期余量） */
+#define AVOID_BACK_MS 350     /* 第一步：直退多久 */
+#define AVOID_BACK_V 70       /* 直退速度（实测后退启动 60，留余量） */
+#define AVOID_ARC_MS 700      /* 第二步：朝一侧弧线离开多久 */
+#define AVOID_ARC_V 100       /* 弧线前进速度 */
+#define AVOID_ARC_W 40        /* 弧线转向量：内轮 100-40=60，仍高于 55% 启动阈值 */
 
 extern volatile uint32_t g_ms_tick;
 
@@ -95,6 +114,83 @@ static void set_wheels(int16_t left, int16_t right)
     }
     // Digital_Display(rr % 10);
     robot_speed(lf, lr, rf, rr);
+}
+
+/* ---------------- 超声波避障状态 ---------------- */
+static uint8_t s_avoid_stage = 0;   /* 0=正常 1=直退 2=弧线甩开 */
+static uint32_t s_avoid_t0 = 0;     /* 当前阶段起始时刻 */
+static int8_t s_avoid_dir = 1;      /* 甩开方向：+1 左转，-1 右转 */
+static uint8_t s_avoid_clear = 1;   /* 上次避障后前方是否重新变空旷 */
+
+/**
+ * @brief  根据超声波距离改写 v/w
+ * @retval 1 = 本周期由避障接管；0 = 用视觉原指令
+ *
+ * 动作序列：直退 350ms → 朝一侧弧线 700ms → 交还视觉。
+ * 方向只在“前方重新变空旷后又遇到新障碍”时才换，
+ * 否则卡在墙角时会左一下右一下来回蹭，永远出不去。
+ */
+static uint8_t avoid_step(int16_t *v, int16_t *w)
+{
+#if AVOID_ENABLE
+    uint32_t now = g_ms_tick;
+    uint16_t d;
+
+    if (s_avoid_stage == 0)
+    {
+        d = Ultrasonic_GetMm();
+
+        /* 前方空旷（或没有回波）→ 记录“干净”，下次触发可以换方向 */
+        if (d == 0 || d >= AVOID_START_MM)
+        {
+            s_avoid_clear = 1;
+        }
+
+        if (d > 0 && d < AVOID_START_MM &&
+            (AVOID_STATE_MASK & (1u << s_state)) &&
+            *v > 0)
+        {
+            if (s_avoid_clear)
+            {
+                s_avoid_dir = (int8_t)(-s_avoid_dir);
+            }
+            s_avoid_clear = 0;
+            s_avoid_stage = 1;
+            s_avoid_t0 = now;
+        }
+        else
+        {
+            return 0;
+        }
+    }
+
+    if (s_avoid_stage == 1)
+    {
+        if ((uint32_t)(now - s_avoid_t0) < AVOID_BACK_MS)
+        {
+            *v = -AVOID_BACK_V;
+            *w = 0;
+            return 1;
+        }
+        s_avoid_stage = 2;
+        s_avoid_t0 = now;
+    }
+
+    if ((uint32_t)(now - s_avoid_t0) < AVOID_ARC_MS)
+    {
+        *v = AVOID_ARC_V;
+        *w = (int16_t)(s_avoid_dir * AVOID_ARC_W);
+    }
+    else
+    {
+        s_avoid_stage = 0;
+    }
+    return 1;
+#else
+    (void)v;
+    (void)w;
+    return 0;
+#endif
 }
 
 // 供外部读当前要显示的数字（比如状态机 state，或自定义数字）
@@ -200,8 +296,14 @@ void VisionCtrl_Task(void)
         return;
     }
 
+    /* 超声波：内部每 60ms 测一次，中值滤波后给避障用 */
+    Ultrasonic_Task();
+
     v = (int16_t)s_v;
     w = (int16_t)s_w;
+
+    /* 避障优先级高于视觉：前方太近就直退 + 甩开 */
+    avoid_step(&v, &w);
 
     /* 差速：w>0 左转 -> 左轮慢、右轮快 */
     set_wheels(v - w, v + w);

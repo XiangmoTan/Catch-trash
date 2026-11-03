@@ -10,6 +10,7 @@
 #include "servo.h"
 #include "stm32f10x.h" // Device header
 #include "vision_ctrl.h"
+#include "ultrasonic.h"
 
 #define LEDSEG_BOOT_TEST 1 /* 1: light all segments 400ms at boot to check tube/wiring; set 0 when done */
 #define catchsizemin 1000
@@ -223,6 +224,7 @@ int main(void)
     Serial_Init(); // 串口初始化
     robot_Init();  // 机器人初始化
     Servo_Init();  // 舵机初始化
+    Ultrasonic_Init(); /* 超声波避障：TRIG=PB10, ECHO=PB11 */
     while (1)
     {
         if (Key_GetNum() == 1)

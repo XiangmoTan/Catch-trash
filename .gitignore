@@ -15,4 +15,5 @@
 *.ept
 *.eide-template
 
+./docs/
 Project.code-workspace
